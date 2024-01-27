@@ -12,11 +12,12 @@ type LsServer struct {
 	ListenAddr *net.TCPAddr
 }
 
-// 新建一个服务端
-// 服务端的职责是:
-// 1. 监听来自本地代理客户端的请求
-// 2. 解密本地代理客户端请求的数据，解析 SOCKS5 协议，连接用户浏览器真正想要连接的远程服务器
-// 3. 转发用户浏览器真正想要连接的远程服务器返回的数据的加密后的内容到本地代理客户端
+// Create a service terminal
+// Responsibilities of service end:
+// 1. Monitor requests from local client clients
+// 2. Decrypt local proxy client request data, analyze SOCKS5 protocol, connect user browser to the remote server that actually wants to connect
+// 3. Transferring the browser to the actual desired connection to the remote server and returning the encrypted content to the local server client.
+
 func NewLsServer(password string, listenAddr string) (*LsServer, error) {
 	bsPassword, err := lightsocks.ParsePassword(password)
 	if err != nil {
@@ -33,12 +34,12 @@ func NewLsServer(password string, listenAddr string) (*LsServer, error) {
 
 }
 
-// 运行服务端并且监听来自本地代理客户端的请求
+// Run service server and monitor requests from local proxy clients
 func (lsServer *LsServer) Listen(didListen func(listenAddr *net.TCPAddr)) error {
 	return lightsocks.ListenEncryptedTCP(lsServer.ListenAddr, lsServer.Cipher, lsServer.handleConn, didListen)
 }
 
-// 解 SOCKS5 协议
+// understanding SOCKS5 protocol
 // https://www.ietf.org/rfc/rfc1928.txt
 func (lsServer *LsServer) handleConn(localConn *lightsocks.SecureTCPConn) {
 	defer localConn.Close()
@@ -56,9 +57,9 @@ func (lsServer *LsServer) handleConn(localConn *lightsocks.SecureTCPConn) {
 	   NMETHODS field contains the number of method identifier octets that
 	   appear in the METHODS field.
 	*/
-	// 第一个字段VER代表Socks的版本，Socks5默认为0x05，其固定长度为1个字节
+	// The first field VER represents the version of Socks, Socks5 defaults to 0x05, and the fixed length is 1 byte.
 	_, err := localConn.DecodeRead(buf)
-	// 只支持版本5
+	// only support version 5
 	if err != nil || buf[0] != 0x05 {
 		return
 	}
@@ -73,7 +74,7 @@ func (lsServer *LsServer) handleConn(localConn *lightsocks.SecureTCPConn) {
 		          | 1  |   1    |
 		          +----+--------+
 	*/
-	// 不需要验证，直接验证通过
+	// No verification, direct verification
 	localConn.EncodeWrite([]byte{0x05, 0x00})
 
 	/**
@@ -84,23 +85,22 @@ func (lsServer *LsServer) handleConn(localConn *lightsocks.SecureTCPConn) {
 	  +----+-----+-------+------+----------+----------+
 	*/
 
-	// 获取真正的远程服务的地址
+	// Get real remote service address
 	n, err := localConn.DecodeRead(buf)
-	// n 最短的长度为7 情况为 ATYP=3 DST.ADDR占用1字节 值为0x0
+	// The shortest length is 7 and the condition is ATYP=3 DST.ADDR occupies 1 byte value of 0x0.
 	if err != nil || n < 7 {
 		return
 	}
 
-	// CMD代表客户端请求的类型，值长度也是1个字节，有三种类型
+	// CMD represents the type of client request, the value length is also 1 byte, there are three types.
 	// CONNECT X'01'
 	if buf[1] != 0x01 {
-		// 目前只支持 CONNECT
+		// currently only support CONNECT
 		return
 	}
 
 	var dIP []byte
-	// aType 代表请求的远程服务器地址类型，值长度1个字节，有三种类型
-	switch buf[3] {
+	// aType represents the remote server address type of the request, value length is 1 byte, and has three types.	switch buf[3] {
 	case 0x01:
 		//	IP V4 address: X'01'
 		dIP = buf[4 : 4+net.IPv4len]
@@ -123,16 +123,16 @@ func (lsServer *LsServer) handleConn(localConn *lightsocks.SecureTCPConn) {
 		Port: int(binary.BigEndian.Uint16(dPort)),
 	}
 
-	// 连接真正的远程服务
+	// connect real remote service
 	dstServer, err := net.DialTCP("tcp", nil, dstAddr)
 	if err != nil {
 		return
 	} else {
 		defer dstServer.Close()
-		// Conn被关闭时直接清除所有数据 不管没有发送的数据
+		// Directly clears all data when Conn is closed, regardless of not sent data
 		dstServer.SetLinger(0)
 
-		// 响应客户端连接成功
+		// response client connection successful
 		/**
 		  +----+-----+-------+------+----------+----------+
 		  |VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
@@ -140,21 +140,21 @@ func (lsServer *LsServer) handleConn(localConn *lightsocks.SecureTCPConn) {
 		  | 1  |  1  | X'00' |  1   | Variable |    2     |
 		  +----+-----+-------+------+----------+----------+
 		*/
-		// 响应客户端连接成功
+		// response client connection successful
 		localConn.EncodeWrite([]byte{0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 	}
 
-	// 进行转发
-	// 从 localUser 读取数据发送到 dstServer
+//transition
+// Read data from localUser and send to dstServer
 	go func() {
 		err := localConn.DecodeCopy(dstServer)
 		if err != nil {
-			// 在 copy 的过程中可能会存在网络超时等 error 被 return，只要有一个发生了错误就退出本次工作
+			// Errors such as network overtime may exist during the copy process and are returned, as soon as an error occurs, this job is exited.
 			localConn.Close()
 			dstServer.Close()
 		}
 	}()
-	// 从 dstServer 读取数据发送到 localUser，这里因为处在翻墙阶段出现网络错误的概率更大
+	// Read data from dstServer and send it to localUser, because the probability of network error occurring at the translation wall stage is higher here.
 	(&lightsocks.SecureTCPConn{
 		Cipher:          localConn.Cipher,
 		ReadWriteCloser: dstServer,
